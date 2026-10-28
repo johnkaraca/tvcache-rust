@@ -1,4 +1,4 @@
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::mem::{size_of, size_of_val};
 
@@ -7,11 +7,6 @@ pub struct Node {
     pub children: HashMap<String, Node>,
     pub sandbox_id: Option<String>,
     pub value: Option<String>,
-    // Dumps only report the dimension to keep them small.
-    #[serde(
-        rename = "embedding_dimension",
-        serialize_with = "serialize_embedding_dimension"
-    )]
     pub embedding: Option<Vec<f32>>,
     pub runtime: u32, // milliseconds
     pub ttl_present: bool,
@@ -60,17 +55,4 @@ impl Node {
             + size_of_val(&self.number_of_cache_hits) as u32
             + size_of_val(&self.number_of_lpm_hits) as u32;
     }
-}
-
-fn serialize_embedding_dimension<S>(
-    embedding: &Option<Vec<f32>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    embedding
-        .as_ref()
-        .map(|embedding| embedding.len())
-        .serialize(serializer)
 }

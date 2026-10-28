@@ -37,19 +37,20 @@ async def test_storage(client: AsyncPersistentCacheClient, task_id: str) -> None
     path = ["a"]
     await client.insert(task_id, path, "value", None, runtime=1)
     node = await get_node(client, task_id, path)
-    check(node["embedding_dimension"] is None, f"expected no embedding, got {node}")
+    check(node["embedding"] is None, f"expected no embedding, got {node}")
     size_with = node["size_in_bytes"] + 16
 
-    await client.insert(task_id, path, None, None, runtime=1, embedding=[1.0, 2.0, 3.0, 4.0])
+    embedding = [1.0, 2.0, 3.0, 4.0]
+    await client.insert(task_id, path, None, None, runtime=1, embedding=embedding)
     node = await get_node(client, task_id, path)
-    check(node["embedding_dimension"] == 4, f"expected dimension 4, got {node}")
+    check(node["embedding"] == embedding, f"expected {embedding}, got {node}")
     check(node["size_in_bytes"] == size_with, f"expected size {size_with}, got {node}")
 
     # The first embedding is kept on re-insert with or without a new one.
     await client.insert(task_id, path, "value", None, runtime=1, embedding=[0.0] * 8)
     await client.insert(task_id, path, "value", None, runtime=1)
     node = await get_node(client, task_id, path)
-    check(node["embedding_dimension"] == 4, f"expected the first embedding kept, got {node}")
+    check(node["embedding"] == embedding, f"expected the first embedding kept, got {node}")
     check(node["size_in_bytes"] == size_with, f"expected size {size_with}, got {node}")
 
 

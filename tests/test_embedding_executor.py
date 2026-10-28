@@ -82,14 +82,15 @@ async def run_rollout(task_id: str, embedder: StubEmbedder) -> list[str]:
 async def test_embeds_stateful_misses(
     client: AsyncPersistentCacheClient, task_id: str
 ) -> None:
-    embedder = StubEmbedder([0.5, 1.5, 2.5])
+    embedding = [0.5, 1.5, 2.5]
+    embedder = StubEmbedder(embedding)
     stateful, stateless, test = await run_rollout(task_id, embedder)
 
     node = await get_node(client, task_id, [stateful])
-    check(node["embedding_dimension"] == 3, f"expected the stateful call embedded, got {node}")
+    check(node["embedding"] == embedding, f"expected the stateful call embedded, got {node}")
     for leaf in (stateless, test):
         node = await get_node(client, task_id, [stateful, leaf])
-        check(node["embedding_dimension"] is None, f"expected no embedding on {leaf}, got {node}")
+        check(node["embedding"] is None, f"expected no embedding on {leaf}, got {node}")
     check(embedder.calls == 1, f"expected one embedding, got {embedder.calls}")
 
     # A second identical rollout hits the cache everywhere, so nothing is embedded.
@@ -106,7 +107,7 @@ async def test_survives_embedder_failure(
     check(embedder.calls == 1, f"expected the embedder called once, got {embedder.calls}")
     node = await get_node(client, task_id, [stateful])
     check(node["value"] is not None, f"expected the value inserted, got {node}")
-    check(node["embedding_dimension"] is None, f"expected no embedding, got {node}")
+    check(node["embedding"] is None, f"expected no embedding, got {node}")
 
 
 async def run_tests() -> None:
