@@ -1,12 +1,18 @@
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::collections::HashMap;
-use std::mem::size_of_val;
+use std::mem::{size_of, size_of_val};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Node {
     pub children: HashMap<String, Node>,
     pub sandbox_id: Option<String>,
     pub value: Option<String>,
+    // Dumps only report the dimension to keep them small.
+    #[serde(
+        rename = "embedding_dimension",
+        serialize_with = "serialize_embedding_dimension"
+    )]
+    pub embedding: Option<Vec<f32>>,
     pub runtime: u32, // milliseconds
     pub ttl_present: bool,
     pub ttl: u32, // seconds
@@ -38,9 +44,15 @@ impl Node {
             .as_ref()
             .map_or(0, |sandbox_id| sandbox_id.len() as u32);
 
+        let embedding_size_in_bytes = self
+            .embedding
+            .as_ref()
+            .map_or(0, |embedding| (embedding.len() * size_of::<f32>()) as u32);
+
         self.size_in_bytes = path_entry_size_in_bytes
             + value_size_in_bytes
             + sandbox_id_size_in_bytes
+            + embedding_size_in_bytes
             + size_of_val(&self.runtime) as u32
             + size_of_val(&self.ttl_present) as u32
             + size_of_val(&self.ttl) as u32
@@ -48,4 +60,17 @@ impl Node {
             + size_of_val(&self.number_of_cache_hits) as u32
             + size_of_val(&self.number_of_lpm_hits) as u32;
     }
+}
+
+fn serialize_embedding_dimension<S>(
+    embedding: &Option<Vec<f32>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    embedding
+        .as_ref()
+        .map(|embedding| embedding.len())
+        .serialize(serializer)
 }
