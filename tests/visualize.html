@@ -228,6 +228,30 @@
       white-space: pre;
     }
 
+    .node-card.selected {
+      border: 4px solid #111;
+    }
+
+    .node-card.similar {
+      border: 4px solid var(--similarity);
+    }
+
+    .similarity-badge {
+      float: right;
+      margin-left: 8px;
+      padding: 1px 7px;
+      border: 2px solid var(--similarity);
+      border-radius: 10px;
+      background: #fff;
+      color: #111;
+      font-size: 11px;
+    }
+
+    .similarity-legend {
+      font-size: 12px;
+      color: #2d3838;
+    }
+
     .node-header {
       background: #0f766e;
       color: #fff;
@@ -321,6 +345,9 @@
       </form>
       <section class="tool">
         <h3>Node</h3>
+        <div class="similarity-legend">
+          <span>A thick black outline marks the selected node. Siblings are outlined by embedding similarity, red (0) to green (1).</span>
+        </div>
         <div id="nodeDetails" class="find-result">
           <div class="result-row"><strong>Status</strong><span>Click a node to see its attributes.</span></div>
         </div>
@@ -350,6 +377,14 @@
     const taskCountEl = document.getElementById("taskCount");
 
     let tvcache = {};
+
+    // Red through orange to green, with stops blended in OKLCH so the middle isn't brown.
+    function similarityColor(similarity) {
+      return d3.scaleLinear()
+        .domain([0, 0.25, 0.5, 0.625, 0.75, 0.875, 1])
+        .range(["#9b1c1c", "#bd4517", "#dd6b0f", "#c77b00", "#a68b00", "#799800", "#37a04b"])
+        .clamp(true)(similarity);
+    }
 
     function display(value) {
       if (value === null || value === undefined) {
@@ -446,6 +481,41 @@
       nodeDetails.scrollIntoView({ block: "nearest" });
     }
 
+    function cosineSimilarity(a, b) {
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+      }
+      return dot / Math.sqrt(normA * normB);
+    }
+
+    function highlightNode(selected) {
+      const embedding = selected.data.attributes.embedding;
+
+      d3.select(chart).selectAll(".node-card").each(function (d) {
+        const card = d3.select(this);
+        const other = d.data.attributes.embedding;
+        const comparable = d !== selected && d.parent === selected.parent
+          && Array.isArray(embedding) && Array.isArray(other) && other.length === embedding.length;
+        const score = comparable ? cosineSimilarity(embedding, other) : NaN;
+        // Zero or empty embeddings give NaN, which has no color.
+        const similarity = Number.isFinite(score) ? score : null;
+
+        card.classed("selected", d === selected)
+          .classed("similar", similarity !== null)
+          .style("--similarity", similarity !== null ? similarityColor(similarity) : null);
+        card.select(".similarity-badge").remove();
+        if (similarity !== null) {
+          card.select(".node-header")
+            .insert("span", function () { return this.firstChild; })
+            .attr("class", "similarity-badge")
+            .text(similarity.toFixed(2));
+        }
+      });
+    }
+
     function renderSelectedTask() {
       const taskId = selectedTaskId();
       const graph = tvcache[taskId];
@@ -533,7 +603,10 @@
         .attr("height", nodeHeight)
         .append("xhtml:div")
         .attr("class", "node-card")
-        .on("click", (event, d) => renderNodeDetails(d.data))
+        .on("click", (event, d) => {
+          renderNodeDetails(d.data);
+          highlightNode(d);
+        })
         .html(d => {
           const data = d.data;
           return `
