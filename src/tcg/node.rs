@@ -8,6 +8,7 @@ pub struct Node {
     pub sandbox_id: Option<String>,
     pub value: Option<String>,
     pub embedding: Option<Vec<f32>>,
+    pub settled: bool, // if true, this node has been compared with every other settled sibling during contraction
     pub runtime: u32, // milliseconds
     pub ttl_present: bool,
     pub ttl: u32, // seconds
@@ -48,6 +49,7 @@ impl Node {
             + value_size_in_bytes
             + sandbox_id_size_in_bytes
             + embedding_size_in_bytes
+            + size_of_val(&self.settled) as u32
             + size_of_val(&self.runtime) as u32
             + size_of_val(&self.ttl_present) as u32
             + size_of_val(&self.ttl) as u32
