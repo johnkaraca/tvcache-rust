@@ -2,7 +2,6 @@ use crate::tcg::Node;
 use crate::types::SandboxCandidate;
 use crate::utils;
 use serde::Serialize;
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -42,7 +41,7 @@ impl ToolCallGraph {
 
         for (idx, p) in path.into_iter().enumerate() {
             if idx < last_idx {
-                if let Some(next) = curr.children.get_mut(&p) {
+                if let Some(next) = curr.child_mut(&p) {
                     curr = next;
                 } else {
                     // Not inserting, so no need to call update size.
@@ -52,19 +51,11 @@ impl ToolCallGraph {
                 let path_entry_size_in_bytes = p.len() as u32;
                 let mut sandbox_id_consumed = false;
 
-                let (new_node, old_size_in_bytes, is_new_node) = match curr.children.entry(p) {
-                    Entry::Occupied(entry) => {
-                        let node = entry.into_mut();
-                        let old_size_in_bytes = node.size_in_bytes;
-
-                        (node, old_size_in_bytes, false)
-                    }
-                    Entry::Vacant(entry) => {
-                        self.number_of_nodes += 1;
-
-                        (entry.insert(Node::default()), 0, true)
-                    }
-                };
+                let (new_node, is_new_node) = curr.get_or_create_child(p);
+                let old_size_in_bytes = new_node.size_in_bytes;
+                if is_new_node {
+                    self.number_of_nodes += 1;
+                }
 
                 // Merge semantics: absent fields leave existing node state
                 // untouched, so an insert with only sandbox cannot destroy a cached
@@ -124,7 +115,7 @@ impl ToolCallGraph {
         // } // No need to store root's sandbox id
 
         for p in path {
-            if let Some(next) = curr.children.get_mut(&p) {
+            if let Some(next) = curr.child_mut(&p) {
                 curr_path.push(p);
                 curr = next;
 
@@ -148,8 +139,7 @@ impl ToolCallGraph {
 
             for p in sandbox_path.as_ref().expect("Sandbox path is invalid") {
                 sandbox_node = sandbox_node
-                    .children
-                    .get_mut(p)
+                    .child_mut(p)
                     .expect("The LPM path that should be valid is empty now");
             }
 
@@ -213,7 +203,7 @@ impl ToolCallGraph {
         let mut curr: &mut Node = &mut self.root;
 
         for p in sandbox_path {
-            if let Some(next) = curr.children.get_mut(p) {
+            if let Some(next) = curr.child_mut(p) {
                 curr = next;
             } else {
                 // Node already removed (this can happen by TTL eviction or TCG size based eviction that runs in the background).
@@ -288,7 +278,7 @@ fn collect_sandbox_candidates_recursive(
         });
     }
 
-    for (path_entry, child) in &node.children {
+    for (path_entry, child) in node.iter_children() {
         current_path.push(path_entry.clone());
         collect_sandbox_candidates_recursive(task_id, child, current_path, candidates);
         current_path.pop();
