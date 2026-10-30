@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::mem::{size_of, size_of_val};
 
@@ -9,7 +10,7 @@ pub struct Node {
     pub value: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub settled: bool, // if true, this node has been compared with every other settled sibling during contraction
-    pub runtime: u32, // milliseconds
+    pub runtime: u32,  // milliseconds
     pub ttl_present: bool,
     pub ttl: u32, // seconds
     pub inserted_at_seconds: u64,
@@ -19,13 +20,45 @@ pub struct Node {
 }
 
 impl Node {
+    pub fn child(&self, key: &str) -> Option<&Node> {
+        self.children.get(key)
+    }
+
+    pub fn child_mut(&mut self, key: &str) -> Option<&mut Node> {
+        self.children.get_mut(key)
+    }
+
+    /// Returns the child and whether it was newly created.
+    pub fn get_or_create_child(&mut self, key: String) -> (&mut Node, bool) {
+        match self.children.entry(key) {
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+            Entry::Vacant(entry) => (entry.insert(Node::default()), true),
+        }
+    }
+
+    pub fn remove_child(&mut self, key: &str) -> Option<Node> {
+        self.children.remove(key)
+    }
+
+    pub fn retain_children<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(&mut Node) -> bool,
+    {
+        self.children.retain(|_, child| keep(child));
+    }
+
+    /// Yields one representative tool-call key and node per child.
+    pub fn iter_children(&self) -> impl Iterator<Item = (&String, &Node)> {
+        self.children.iter()
+    }
+
     pub fn walk_subtcg<T, F>(&self, initial: T, f: &mut F) -> T
     where
         F: FnMut(T, &Node) -> T,
     {
         let mut acc = f(initial, self);
 
-        for child in self.children.values() {
+        for (_, child) in self.iter_children() {
             acc = child.walk_subtcg(acc, f);
         }
 
