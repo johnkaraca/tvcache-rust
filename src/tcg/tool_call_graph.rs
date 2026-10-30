@@ -48,14 +48,17 @@ impl ToolCallGraph {
                     return (false, false);
                 }
             } else {
-                let path_entry_size_in_bytes = p.len() as u32;
                 let mut sandbox_id_consumed = false;
 
-                let (new_node, is_new_node) = curr.get_or_create_child(p);
+                let (new_node, is_new_node) = curr.get_or_create_child(p.clone());
                 let old_size_in_bytes = new_node.size_in_bytes;
                 if is_new_node {
                     self.number_of_nodes += 1;
                 }
+                let entry = new_node
+                    .tool_calls
+                    .get_mut(&p)
+                    .expect("Missing tool-call key");
 
                 // Merge semantics: absent fields leave existing node state
                 // untouched, so an insert with only sandbox cannot destroy a cached
@@ -63,8 +66,8 @@ impl ToolCallGraph {
                 // so the same code will fully initialize them.
                 if is_new_node || value.is_some() {
                     new_node.inserted_at_seconds = utils::current_utc_seconds();
-                    new_node.value = value;
-                    new_node.runtime = runtime;
+                    entry.value = value;
+                    entry.runtime = runtime;
                 }
 
                 if ttl_exists {
@@ -82,11 +85,12 @@ impl ToolCallGraph {
                 }
 
                 // A tool call's embedding never changes, so keep the first one.
-                if embedding.is_some() && new_node.embedding.is_none() {
-                    new_node.embedding = embedding;
+                if embedding.is_some() && entry.embedding.is_none() {
+                    entry.embedding = embedding;
+                    new_node.settled = false;
                 }
 
-                new_node.update_size_in_bytes(path_entry_size_in_bytes);
+                new_node.update_size_in_bytes();
                 self.size_in_bytes =
                     self.size_in_bytes - old_size_in_bytes as u64 + new_node.size_in_bytes as u64;
 
@@ -126,7 +130,7 @@ impl ToolCallGraph {
 
                 if curr_path.len() == path_len {
                     curr.number_of_cache_hits += 1;
-                    value_of_path = curr.value.clone();
+                    value_of_path = curr.tool_calls[&curr_path[path_len - 1]].value.clone();
                 }
             } else {
                 // The path has diverged from the tcg, so return what you have seen so far, if value is found, return it
@@ -219,13 +223,9 @@ impl ToolCallGraph {
         curr.sandbox_id = None;
         self.number_of_sandboxes -= 1;
 
-        let path_entry_size_in_bytes = sandbox_path
-            .last()
-            .map_or(0, |path_entry| path_entry.len() as u32);
-
         let old_size_in_bytes = curr.size_in_bytes;
 
-        curr.update_size_in_bytes(path_entry_size_in_bytes);
+        curr.update_size_in_bytes();
 
         self.size_in_bytes =
             self.size_in_bytes - old_size_in_bytes as u64 + curr.size_in_bytes as u64;
@@ -282,5 +282,60 @@ fn collect_sandbox_candidates_recursive(
         current_path.push(path_entry.clone());
         collect_sandbox_candidates_recursive(task_id, child, current_path, candidates);
         current_path.pop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn per_call_entries_preserve_insert_semantics() {
+        let mut graph = ToolCallGraph::new();
+        assert!(graph.root.tool_calls.is_empty());
+        graph.insert(
+            vec!["a".into()],
+            Some("value".into()),
+            Some("snapshot".into()),
+            7,
+            Some(60),
+            true,
+            None,
+        );
+        let original_size = graph.size_in_bytes;
+        for (embedding, settled) in [
+            (None, true),
+            (Some(vec![1.0, 0.0]), false),
+            (Some(vec![0.0, 1.0]), true),
+            (None, true),
+        ] {
+            graph.root.child_mut("a").unwrap().settled = true;
+            assert_eq!(
+                graph.insert(
+                    vec!["a".into()],
+                    None,
+                    Some("replacement".into()),
+                    99,
+                    None,
+                    false,
+                    embedding,
+                ),
+                (true, false)
+            );
+            assert_eq!(graph.root.child("a").unwrap().settled, settled);
+        }
+        assert_eq!(graph.find(vec!["a".into()]).0.as_deref(), Some("value"));
+        assert_eq!((graph.number_of_nodes, graph.number_of_sandboxes), (1, 1));
+        assert_eq!(graph.size_in_bytes, original_size + 8);
+        let node = graph.root.child_mut("a").unwrap();
+        assert_eq!(node.sandbox_id.as_deref(), Some("snapshot"));
+        assert!(node.ttl_present && node.ttl == 60);
+        assert_eq!(node.tool_calls["a"].runtime, 7);
+        assert_eq!(node.tool_calls["a"].embedding, Some(vec![1.0, 0.0]));
+        let original_size = node.size_in_bytes;
+        node.tool_calls
+            .insert("alias".into(), node.tool_calls["a"].clone());
+        node.update_size_in_bytes();
+        assert_eq!(node.size_in_bytes, original_size + 5 + 5 + 4 + 8);
     }
 }

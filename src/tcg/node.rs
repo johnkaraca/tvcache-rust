@@ -4,13 +4,18 @@ use std::collections::HashMap;
 use std::mem::{size_of, size_of_val};
 
 #[derive(Clone, Debug, Default, Serialize)]
+pub struct ToolCallEntry {
+    pub value: Option<String>,
+    pub runtime: u32, // milliseconds
+    pub embedding: Option<Vec<f32>>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Node {
     pub children: HashMap<String, Node>,
     pub sandbox_id: Option<String>,
-    pub value: Option<String>,
-    pub embedding: Option<Vec<f32>>,
+    pub tool_calls: HashMap<String, ToolCallEntry>,
     pub settled: bool, // if true, this node has been compared with every other settled sibling during contraction
-    pub runtime: u32,  // milliseconds
     pub ttl_present: bool,
     pub ttl: u32, // seconds
     pub inserted_at_seconds: u64,
@@ -32,7 +37,12 @@ impl Node {
     pub fn get_or_create_child(&mut self, key: String) -> (&mut Node, bool) {
         match self.children.entry(key) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
-            Entry::Vacant(entry) => (entry.insert(Node::default()), true),
+            Entry::Vacant(entry) => {
+                let mut node = Node::default();
+                node.tool_calls
+                    .insert(entry.key().clone(), ToolCallEntry::default());
+                (entry.insert(node), true)
+            }
         }
     }
 
@@ -65,25 +75,29 @@ impl Node {
         return acc;
     }
 
-    pub fn update_size_in_bytes(&mut self, path_entry_size_in_bytes: u32) {
-        let value_size_in_bytes = self.value.as_ref().map_or(0, |value| value.len() as u32);
+    pub fn update_size_in_bytes(&mut self) {
+        let entries_size_in_bytes: u32 = self
+            .tool_calls
+            .iter()
+            .map(|(key, entry)| {
+                key.len() as u32
+                    + entry.value.as_ref().map_or(0, |value| value.len() as u32)
+                    + size_of_val(&entry.runtime) as u32
+                    + entry
+                        .embedding
+                        .as_ref()
+                        .map_or(0, |embedding| (embedding.len() * size_of::<f32>()) as u32)
+            })
+            .sum();
 
         let sandbox_id_size_in_bytes = self
             .sandbox_id
             .as_ref()
             .map_or(0, |sandbox_id| sandbox_id.len() as u32);
 
-        let embedding_size_in_bytes = self
-            .embedding
-            .as_ref()
-            .map_or(0, |embedding| (embedding.len() * size_of::<f32>()) as u32);
-
-        self.size_in_bytes = path_entry_size_in_bytes
-            + value_size_in_bytes
+        self.size_in_bytes = entries_size_in_bytes
             + sandbox_id_size_in_bytes
-            + embedding_size_in_bytes
             + size_of_val(&self.settled) as u32
-            + size_of_val(&self.runtime) as u32
             + size_of_val(&self.ttl_present) as u32
             + size_of_val(&self.ttl) as u32
             + size_of_val(&self.inserted_at_seconds) as u32
